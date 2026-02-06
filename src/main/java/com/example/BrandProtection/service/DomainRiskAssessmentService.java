@@ -49,6 +49,7 @@ public class DomainRiskAssessmentService {
 
     public RiskScoreResult assess(DiscoveredDomainEntity discoveredDomain, String brandKeyword) {
         String domain = discoveredDomain.getDomainName();
+        logger.info("Risk assessment started for domain {}", domain);
         WhoisAnalysisResult whoisResult = null;
         WhoisDetails whoisDetails = null;
         int domainAgeDays = -1;
@@ -68,6 +69,8 @@ public class DomainRiskAssessmentService {
         sslResult = sslAnalysisService.inspect(domain);
         sslRiskFlags = sslAnalysisService.evaluateRisk(sslResult);
         contentFlags = contentAnalysisService.scan(domain, brandKeyword);
+        logger.info("Signals collected for {}: domainAgeDays={}, mxPresent={}, suspiciousHostingCountry={}",
+            domain, domainAgeDays, dnsAnalysisResult.isMxPresent(), dnsAnalysisResult.isSuspiciousHostingCountry());
 
         RiskScoreInput input = new RiskScoreInput();
         input.setSimilarityScore(discoveredDomain.getSimilarityScore() == null ? 0 : discoveredDomain.getSimilarityScore().intValue());
@@ -86,7 +89,7 @@ public class DomainRiskAssessmentService {
 
         RiskScoreResult scoreResult = scoringService.score(input);
         updateDiscoveredDomain(discoveredDomain, domainAgeDays, scoreResult);
-        threatService.persistIfHighRisk(domain, scoreResult, whoisDetails,
+        threatService.persistThreat(domain, scoreResult, whoisDetails,
             whoisDetails == null ? null : whoisDetails.getCreationDate(),
             input.getSimilarityScore(), sslResult, contentFlags, dnsAnalysisResult, input);
 

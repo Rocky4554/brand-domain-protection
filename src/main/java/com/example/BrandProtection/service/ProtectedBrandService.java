@@ -46,6 +46,9 @@ public class ProtectedBrandService {
         entity.setStatus(BrandStatus.ACTIVE);
         entity.setCreatedAt(Instant.now());
         ProtectedDomainEntity saved = protectedDomainRepository.save(entity);
+        org.slf4j.LoggerFactory.getLogger(ProtectedBrandService.class)
+            .info("Brand registered: id={}, domain={}, keywords={}",
+                saved.getId(), saved.getBrandDomain(), saved.getKeywords());
         monitoringOrchestrator.runForBrand(saved);
         return saved.getId();
     }

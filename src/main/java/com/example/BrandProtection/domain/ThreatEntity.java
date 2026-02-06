@@ -29,6 +29,9 @@ public class ThreatEntity {
     @Column(nullable = false)
     private ThreatSeverity severity;
 
+    @Column(name = "risk_score")
+    private Integer riskScore;
+
     @Column(name = "evidence_json", columnDefinition = "TEXT")
     private String evidenceJson;
 
@@ -65,6 +68,14 @@ public class ThreatEntity {
 
     public void setSeverity(ThreatSeverity severity) {
         this.severity = severity;
+    }
+
+    public Integer getRiskScore() {
+        return riskScore;
+    }
+
+    public void setRiskScore(Integer riskScore) {
+        this.riskScore = riskScore;
     }
 
     public String getEvidenceJson() {

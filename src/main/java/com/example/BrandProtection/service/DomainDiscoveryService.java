@@ -42,6 +42,7 @@ public class DomainDiscoveryService {
     }
 
     public List<DiscoveredDomainEntity> discover(ProtectedDomainEntity protectedDomain) {
+        logger.info("Discovery started for brand {}", protectedDomain.getBrandDomain());
         Set<String> candidateDomains = new HashSet<>();
         String keyword = protectedDomain.getBrandKeyword() + "*";
         List<DomainSearchResult> results = domainIqClient.searchDomainsByKeyword(keyword);
@@ -55,6 +56,8 @@ public class DomainDiscoveryService {
             protectedDomain.getBrandDomain(),
             protectedDomain.getKeywords());
         candidateDomains.addAll(generated);
+        logger.info("Discovery candidates: domainIq={}, generated={}, total={}",
+            domainIqDomains.size(), generated.size(), candidateDomains.size());
 
         List<DiscoveredDomainEntity> discovered = new ArrayList<>();
 

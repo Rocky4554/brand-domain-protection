@@ -27,24 +27,22 @@ public class ThreatService {
         this.objectMapper = objectMapper;
     }
 
-    public void persistIfHighRisk(String domain, RiskScoreResult scoreResult, WhoisDetails whoisDetails,
-                                  String registrationDate, int similarityScore, SslInspectionResult sslResult,
-                                  ContentRiskFlags contentFlags, DnsAnalysisResult dnsAnalysisResult,
-                                  RiskScoreInput scoreInput) {
-        if (scoreResult.getRiskLevel() != RiskLevel.HIGH) {
-            return;
-        }
-
+    public void persistThreat(String domain, RiskScoreResult scoreResult, WhoisDetails whoisDetails,
+                              String registrationDate, int similarityScore, SslInspectionResult sslResult,
+                              ContentRiskFlags contentFlags, DnsAnalysisResult dnsAnalysisResult,
+                              RiskScoreInput scoreInput) {
         ThreatEntity threat = new ThreatEntity();
         threat.setDomainName(domain);
         threat.setType(ThreatType.PHISHING);
-        threat.setSeverity(ThreatSeverity.HIGH);
+        threat.setSeverity(mapSeverity(scoreResult.getRiskLevel()));
         threat.setDetectedAt(Instant.now());
+        threat.setRiskScore(scoreResult.getFinalScore());
         threat.setEvidenceJson(serializeEvidence(whoisDetails, registrationDate, similarityScore, sslResult,
             contentFlags, dnsAnalysisResult, scoreInput));
 
         threatRepository.save(threat);
-        logger.info("Persisted HIGH threat for domain {} with score {}", domain, scoreResult.getFinalScore());
+        logger.info("Persisted threat for domain {} with score {} and level {}",
+            domain, scoreResult.getFinalScore(), scoreResult.getRiskLevel());
     }
 
     private String serializeEvidence(WhoisDetails whoisDetails, String registrationDate, int similarityScore,
@@ -71,5 +69,16 @@ public class ThreatService {
         } catch (JsonProcessingException ex) {
             return "{\"error\":\"failed_to_serialize_evidence\"}";
         }
+    }
+
+    private ThreatSeverity mapSeverity(RiskLevel riskLevel) {
+        if (riskLevel == null) {
+            return ThreatSeverity.LOW;
+        }
+        return switch (riskLevel) {
+            case HIGH -> ThreatSeverity.HIGH;
+            case MEDIUM -> ThreatSeverity.MEDIUM;
+            case LOW -> ThreatSeverity.LOW;
+        };
     }
 }
