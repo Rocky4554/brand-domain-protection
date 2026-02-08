@@ -1,5 +1,6 @@
 package com.example.BrandProtection.domainiq.dto;
 
+import com.fasterxml.jackson.annotation.JsonAlias;
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import com.fasterxml.jackson.annotation.JsonProperty;
 
@@ -8,6 +9,8 @@ public class DomainSearchItem {
     private String domain;
     @JsonProperty("first_seen")
     private String firstSeen;
+    @JsonAlias({"create_date", "creation_date"})
+    private String createDate;
     private String registrar;
     private String status;
     private String tld;
@@ -37,6 +40,14 @@ public class DomainSearchItem {
 
     public void setRegistrar(String registrar) {
         this.registrar = registrar;
+    }
+
+    public String getCreateDate() {
+        return createDate;
+    }
+
+    public void setCreateDate(String createDate) {
+        this.createDate = createDate;
     }
 
     public String getStatus() {

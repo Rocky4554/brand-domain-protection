@@ -69,4 +69,8 @@ public class ProtectedBrandService {
         }
         return threats;
     }
+
+    public void runDiscovery(UUID brandId) {
+        monitoringOrchestrator.runForBrandId(brandId);
+    }
 }

@@ -11,7 +11,7 @@ import java.time.LocalDate;
 import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
-import java.util.HashSet;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
 import java.util.stream.Collectors;
@@ -29,35 +29,62 @@ public class DomainDiscoveryService {
     private final SimilarityService similarityService;
     private final DiscoveredDomainRepository discoveredDomainRepository;
     private final DomainVariationGenerator variationGenerator;
+    private final DomainDiscoveryProperties discoveryProperties;
+    private final SimilarDomainService similarDomainService;
 
     public DomainDiscoveryService(
         DomainIqClient domainIqClient,
         SimilarityService similarityService,
         DiscoveredDomainRepository discoveredDomainRepository,
-        DomainVariationGenerator variationGenerator) {
+        DomainVariationGenerator variationGenerator,
+        DomainDiscoveryProperties discoveryProperties,
+        SimilarDomainService similarDomainService) {
         this.domainIqClient = domainIqClient;
         this.similarityService = similarityService;
         this.discoveredDomainRepository = discoveredDomainRepository;
         this.variationGenerator = variationGenerator;
+        this.discoveryProperties = discoveryProperties;
+        this.similarDomainService = similarDomainService;
     }
 
-    public List<DiscoveredDomainEntity> discover(ProtectedDomainEntity protectedDomain) {
-        logger.info("Discovery started for brand {}", protectedDomain.getBrandDomain());
-        Set<String> candidateDomains = new HashSet<>();
-        String keyword = protectedDomain.getBrandKeyword() + "*";
+    public List<DiscoveredDomainEntity> discover(BrandSnapshot snapshot, ProtectedDomainEntity protectedDomain) {
+        logger.info("Discovery started for brand {}", snapshot.getBrandDomain());
+        Set<String> candidateDomains = new LinkedHashSet<>();
+        String keyword = snapshot.getBrandKeyword() + "*";
         List<DomainSearchResult> results = domainIqClient.searchDomainsByKeyword(keyword);
+        int maxDomainIq = discoveryProperties.getMaxDomainIqResults();
+        if (maxDomainIq > 0 && results.size() > maxDomainIq) {
+            logger.info("Limiting DomainIQ results from {} to {}.", results.size(), maxDomainIq);
+            results = results.subList(0, maxDomainIq);
+        }
         Set<String> domainIqDomains = results.stream()
             .map(DomainSearchResult::getDomain)
             .filter(domain -> domain != null && !domain.isBlank())
-            .collect(Collectors.toSet());
+            .collect(Collectors.toCollection(LinkedHashSet::new));
         candidateDomains.addAll(domainIqDomains);
 
         Set<String> generated = variationGenerator.generate(
-            protectedDomain.getBrandDomain(),
-            protectedDomain.getKeywords());
+            snapshot.getBrandDomain(),
+            snapshot.getKeywords());
+        int maxGenerated = discoveryProperties.getMaxGenerated();
+        if (maxGenerated > 0 && generated.size() > maxGenerated) {
+            logger.info("Limiting generated candidates from {} to {}.", generated.size(), maxGenerated);
+            generated = generated.stream()
+                .limit(maxGenerated)
+                .collect(Collectors.toCollection(LinkedHashSet::new));
+        }
         candidateDomains.addAll(generated);
+        int maxCandidates = discoveryProperties.getMaxCandidates();
+        if (maxCandidates > 0 && candidateDomains.size() > maxCandidates) {
+            logger.info("Limiting total candidates from {} to {}.", candidateDomains.size(), maxCandidates);
+            candidateDomains = candidateDomains.stream()
+                .limit(maxCandidates)
+                .collect(Collectors.toCollection(LinkedHashSet::new));
+        }
         logger.info("Discovery candidates: domainIq={}, generated={}, total={}",
             domainIqDomains.size(), generated.size(), candidateDomains.size());
+
+        similarDomainService.saveCandidates(candidateDomains, domainIqDomains, generated, protectedDomain);
 
         List<DiscoveredDomainEntity> discovered = new ArrayList<>();
 
@@ -65,7 +92,7 @@ public class DomainDiscoveryService {
             if (!domainIqDomains.contains(domain) && !isRegisteredDomain(domain)) {
                 continue;
             }
-            int similarity = similarityService.similarityPercent(domain, protectedDomain.getBrandKeyword());
+            int similarity = similarityService.similarityPercent(domain, snapshot.getBrandKeyword());
             if (similarity < SIMILARITY_THRESHOLD) {
                 continue;
             }
@@ -86,7 +113,7 @@ public class DomainDiscoveryService {
             discovered.add(entity);
         }
 
-        logger.info("Discovered {} suspicious domains for brand {}", discovered.size(), protectedDomain.getBrandDomain());
+        logger.info("Discovered {} suspicious domains for brand {}", discovered.size(), snapshot.getBrandDomain());
         return discoveredDomainRepository.saveAll(discovered);
     }
 
@@ -94,8 +121,17 @@ public class DomainDiscoveryService {
         if (date == null || date.isBlank()) {
             return null;
         }
-        LocalDate parsed = LocalDate.parse(date, DATE_FORMATTER);
-        return parsed.atStartOfDay().toInstant(ZoneOffset.UTC);
+        String trimmed = date.trim();
+        if ("0000-00-00".equals(trimmed)) {
+            return null;
+        }
+        try {
+            LocalDate parsed = LocalDate.parse(trimmed, DATE_FORMATTER);
+            return parsed.atStartOfDay().toInstant(ZoneOffset.UTC);
+        } catch (RuntimeException ex) {
+            logger.warn("Skipping invalid date from DomainIQ: {}", trimmed);
+            return null;
+        }
     }
 
     private boolean isRegisteredDomain(String domain) {
@@ -108,4 +144,5 @@ public class DomainDiscoveryService {
         boolean hasNs = dnsDetails.getNsRecords() != null && !dnsDetails.getNsRecords().isEmpty();
         return hasA || hasMx || hasNs;
     }
+
 }

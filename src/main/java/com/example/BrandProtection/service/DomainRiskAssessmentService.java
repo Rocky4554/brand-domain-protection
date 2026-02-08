@@ -3,7 +3,6 @@ package com.example.BrandProtection.service;
 import com.example.BrandProtection.domain.DiscoveredDomainEntity;
 import com.example.BrandProtection.domain.DiscoveredDomainRepository;
 import com.example.BrandProtection.domain.RiskLevel;
-import com.example.BrandProtection.domain.ProtectedDomainEntity;
 import com.example.BrandProtection.domainiq.dto.WhoisDetails;
 import java.time.Instant;
 import java.util.List;
@@ -47,7 +46,7 @@ public class DomainRiskAssessmentService {
         this.dnsAnalysisService = dnsAnalysisService;
     }
 
-    public RiskScoreResult assess(DiscoveredDomainEntity discoveredDomain, String brandKeyword) {
+    public RiskScoreResult assess(DiscoveredDomainEntity discoveredDomain, BrandSnapshot snapshot) {
         String domain = discoveredDomain.getDomainName();
         logger.info("Risk assessment started for domain {}", domain);
         WhoisAnalysisResult whoisResult = null;
@@ -68,7 +67,7 @@ public class DomainRiskAssessmentService {
             whoisDetails == null ? null : whoisDetails.getCreationDate());
         sslResult = sslAnalysisService.inspect(domain);
         sslRiskFlags = sslAnalysisService.evaluateRisk(sslResult);
-        contentFlags = contentAnalysisService.scan(domain, brandKeyword);
+        contentFlags = contentAnalysisService.scan(domain, snapshot.getBrandKeyword());
         logger.info("Signals collected for {}: domainAgeDays={}, mxPresent={}, suspiciousHostingCountry={}",
             domain, domainAgeDays, dnsAnalysisResult.isMxPresent(), dnsAnalysisResult.isSuspiciousHostingCountry());
 
@@ -83,9 +82,9 @@ public class DomainRiskAssessmentService {
         input.setSuspiciousHostingCountry(dnsAnalysisResult.isSuspiciousHostingCountry());
         input.setRegisteredDomain(true);
         input.setSslPresent(sslResult != null);
-        input.setOfficialSubdomain(isOfficialSubdomain(discoveredDomain));
-        input.setApprovedRegistrar(isApprovedRegistrar(discoveredDomain));
-        input.setApprovedEmailProvider(isApprovedEmailProvider(discoveredDomain, dnsAnalysisResult));
+        input.setOfficialSubdomain(isOfficialSubdomain(snapshot, discoveredDomain));
+        input.setApprovedRegistrar(isApprovedRegistrar(snapshot, discoveredDomain));
+        input.setApprovedEmailProvider(isApprovedEmailProvider(snapshot, dnsAnalysisResult));
 
         RiskScoreResult scoreResult = scoringService.score(input);
         updateDiscoveredDomain(discoveredDomain, domainAgeDays, scoreResult);
@@ -97,27 +96,24 @@ public class DomainRiskAssessmentService {
         return scoreResult;
     }
 
-    private boolean isOfficialSubdomain(DiscoveredDomainEntity discoveredDomain) {
-        ProtectedDomainEntity brand = discoveredDomain.getProtectedDomain();
-        if (brand == null || brand.getOfficialSubdomains() == null) {
+    private boolean isOfficialSubdomain(BrandSnapshot snapshot, DiscoveredDomainEntity discoveredDomain) {
+        if (snapshot.getOfficialSubdomains() == null) {
             return false;
         }
-        return brand.getOfficialSubdomains().stream()
+        return snapshot.getOfficialSubdomains().stream()
             .anyMatch(subdomain -> subdomain != null && subdomain.equalsIgnoreCase(discoveredDomain.getDomainName()));
     }
 
-    private boolean isApprovedRegistrar(DiscoveredDomainEntity discoveredDomain) {
-        ProtectedDomainEntity brand = discoveredDomain.getProtectedDomain();
-        if (brand == null || brand.getApprovedRegistrars() == null || discoveredDomain.getRegistrar() == null) {
+    private boolean isApprovedRegistrar(BrandSnapshot snapshot, DiscoveredDomainEntity discoveredDomain) {
+        if (snapshot.getApprovedRegistrars() == null || discoveredDomain.getRegistrar() == null) {
             return false;
         }
-        return brand.getApprovedRegistrars().stream()
+        return snapshot.getApprovedRegistrars().stream()
             .anyMatch(registrar -> registrar != null && registrar.equalsIgnoreCase(discoveredDomain.getRegistrar()));
     }
 
-    private boolean isApprovedEmailProvider(DiscoveredDomainEntity discoveredDomain, DnsAnalysisResult dnsAnalysisResult) {
-        ProtectedDomainEntity brand = discoveredDomain.getProtectedDomain();
-        if (brand == null || brand.getApprovedEmailProviders() == null || dnsAnalysisResult == null || !dnsAnalysisResult.isMxPresent()) {
+    private boolean isApprovedEmailProvider(BrandSnapshot snapshot, DnsAnalysisResult dnsAnalysisResult) {
+        if (snapshot.getApprovedEmailProviders() == null || dnsAnalysisResult == null || !dnsAnalysisResult.isMxPresent()) {
             return false;
         }
         List<String> mxHosts = dnsAnalysisResult.getMxHosts();
@@ -126,7 +122,7 @@ public class DomainRiskAssessmentService {
         }
         for (String mxHost : mxHosts) {
             String host = mxHost.toLowerCase(Locale.ROOT);
-            for (String approved : brand.getApprovedEmailProviders()) {
+            for (String approved : snapshot.getApprovedEmailProviders()) {
                 if (approved == null || approved.isBlank()) {
                     continue;
                 }

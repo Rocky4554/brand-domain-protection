@@ -38,4 +38,10 @@ public class BrandProtectionController {
         List<ThreatDto> threats = protectedBrandService.getThreatsForBrand(brandId);
         return new ThreatSummaryResponse(threats.size(), threats);
     }
+
+    @PostMapping("/{id}/discover")
+    @ResponseStatus(HttpStatus.ACCEPTED)
+    public void runDiscovery(@PathVariable("id") UUID brandId) {
+        protectedBrandService.runDiscovery(brandId);
+    }
 }
