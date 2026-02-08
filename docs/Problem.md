@@ -87,11 +87,35 @@ Discovery sometimes timed out while calling DomainIQ DNS history. This raised
 `ReadTimeoutException` and stopped async discovery.
 
 ### Fix Applied
-- Increased `domainiq.timeout-ms`
+- Increased `domainiq.timeout-ms` to 60s (skip after 1 min)
 - Added retry with backoff for timeout/network errors (not for 4xx)
 - Limited per‑brand candidate counts to reduce total outbound calls
 - Added concurrency limiter (semaphore) to prevent burst traffic
 - Added a simple circuit breaker to stop hammering DomainIQ when failing
+- DNS timeouts now skip that domain instead of crashing the whole request
+- Added `generated_domains` to track DNS status and results per generated domain
+
+---
+
+## Additional Issue: WHOIS lookup failures blocking processing
+DomainIQ sometimes returns errors for WHOIS (400/5xx). Previously this could stop
+the risk assessment flow for a domain.
+
+### Fix Applied
+- Added `whois_lookup` table to track per-domain WHOIS status
+- Log WHOIS start/complete/failure per domain
+- On failure, save status + details and continue to next domain
+- Seed `PENDING` entries for every discovered domain before WHOIS starts
+
+---
+
+## Additional Issue: Limited visibility into SSL and scoring flow
+It was hard to trace SSL and scoring progress for a domain in logs.
+
+### Fix Applied
+- Added per-domain SSL start/complete logs
+- Added scoring start/complete logs with final score and level
+
 
 ### Config keys involved
 - `domainiq.timeout-ms`

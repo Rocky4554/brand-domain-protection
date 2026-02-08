@@ -1,11 +1,13 @@
 package com.example.BrandProtection.service;
 
 import com.example.BrandProtection.domain.DiscoveredDomainEntity;
-import com.example.BrandProtection.domain.DiscoveredDomainRepository;
 import com.example.BrandProtection.domain.ProtectedDomainEntity;
+import com.example.BrandProtection.domain.DiscoveredDomainRepository;
 import com.example.BrandProtection.domainiq.DomainIqClient;
 import com.example.BrandProtection.domainiq.dto.DnsDetails;
 import com.example.BrandProtection.domainiq.dto.DomainSearchResult;
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.ZoneOffset;
@@ -31,6 +33,9 @@ public class DomainDiscoveryService {
     private final DomainVariationGenerator variationGenerator;
     private final DomainDiscoveryProperties discoveryProperties;
     private final SimilarDomainService similarDomainService;
+    private final GeneratedDomainService generatedDomainService;
+    private final ObjectMapper objectMapper;
+ 
 
     public DomainDiscoveryService(
         DomainIqClient domainIqClient,
@@ -38,13 +43,17 @@ public class DomainDiscoveryService {
         DiscoveredDomainRepository discoveredDomainRepository,
         DomainVariationGenerator variationGenerator,
         DomainDiscoveryProperties discoveryProperties,
-        SimilarDomainService similarDomainService) {
+        SimilarDomainService similarDomainService,
+        GeneratedDomainService generatedDomainService,
+        ObjectMapper objectMapper) {
         this.domainIqClient = domainIqClient;
         this.similarityService = similarityService;
         this.discoveredDomainRepository = discoveredDomainRepository;
         this.variationGenerator = variationGenerator;
         this.discoveryProperties = discoveryProperties;
         this.similarDomainService = similarDomainService;
+        this.generatedDomainService = generatedDomainService;
+        this.objectMapper = objectMapper;
     }
 
     public List<DiscoveredDomainEntity> discover(BrandSnapshot snapshot, ProtectedDomainEntity protectedDomain) {
@@ -85,11 +94,23 @@ public class DomainDiscoveryService {
             domainIqDomains.size(), generated.size(), candidateDomains.size());
 
         similarDomainService.saveCandidates(candidateDomains, domainIqDomains, generated, protectedDomain);
+        logger.info("Similar domain saving finished for brand {}.", snapshot.getBrandDomain());
+        generatedDomainService.seedGeneratedDomains(generated, protectedDomain);
 
         List<DiscoveredDomainEntity> discovered = new ArrayList<>();
 
         for (String domain : candidateDomains) {
-            if (!domainIqDomains.contains(domain) && !isRegisteredDomain(domain)) {
+            boolean fromDomainIq = domainIqDomains.contains(domain);
+            boolean fromGenerated = generated.contains(domain);
+            if (fromGenerated && fromDomainIq) {
+                generatedDomainService.markFulfilled(
+                    protectedDomain,
+                    domain,
+                    "{\"skipped\":true,\"reason\":\"present_in_domainiq\"}");
+                logger.info("DNS fetch skipped for {} (present in DomainIQ).", domain);
+            }
+            if (!fromDomainIq && !isRegisteredDomain(domain, fromGenerated, protectedDomain)) {
+                logger.info("DNS fetch skipped for {}.", domain);
                 continue;
             }
             int similarity = similarityService.similarityPercent(domain, snapshot.getBrandKeyword());
@@ -113,6 +134,7 @@ public class DomainDiscoveryService {
             discovered.add(entity);
         }
 
+        logger.info("DNS fetching completed for brand {}.", snapshot.getBrandDomain());
         logger.info("Discovered {} suspicious domains for brand {}", discovered.size(), snapshot.getBrandDomain());
         return discoveredDomainRepository.saveAll(discovered);
     }
@@ -134,15 +156,44 @@ public class DomainDiscoveryService {
         }
     }
 
-    private boolean isRegisteredDomain(String domain) {
-        DnsDetails dnsDetails = domainIqClient.getDnsHistory(domain);
-        if (dnsDetails == null) {
+    private boolean isRegisteredDomain(String domain, boolean isGenerated, ProtectedDomainEntity brand) {
+        if (!isGenerated) {
             return false;
         }
-        boolean hasA = dnsDetails.getaRecords() != null && !dnsDetails.getaRecords().isEmpty();
-        boolean hasMx = dnsDetails.getMxRecords() != null && !dnsDetails.getMxRecords().isEmpty();
-        boolean hasNs = dnsDetails.getNsRecords() != null && !dnsDetails.getNsRecords().isEmpty();
-        return hasA || hasMx || hasNs;
+        logger.info("DNS fetching started for {}.", domain);
+        generatedDomainService.markProcessing(brand, domain);
+        try {
+            DnsDetails dnsDetails = domainIqClient.getDnsHistory(domain);
+            if (dnsDetails == null) {
+                generatedDomainService.markFailed(brand, domain, "No DNS details returned");
+                logger.info("DNS fetching completed for {} (no DNS details).", domain);
+                return false;
+            }
+            boolean hasA = dnsDetails.getaRecords() != null && !dnsDetails.getaRecords().isEmpty();
+            boolean hasMx = dnsDetails.getMxRecords() != null && !dnsDetails.getMxRecords().isEmpty();
+            boolean hasNs = dnsDetails.getNsRecords() != null && !dnsDetails.getNsRecords().isEmpty();
+            String dnsJson = toJson(dnsDetails);
+            if (hasA || hasMx || hasNs) {
+                generatedDomainService.markFulfilled(brand, domain, dnsJson);
+                logger.info("DNS fetching completed for {} (records found).", domain);
+                return true;
+            }
+            generatedDomainService.markFailed(brand, domain, dnsJson);
+            logger.info("DNS fetching completed for {} (no records).", domain);
+            return false;
+        } catch (RuntimeException ex) {
+            generatedDomainService.markFailed(brand, domain, "DomainIQ error: " + ex.getMessage());
+            logger.warn("DNS check skipped for {} due to DomainIQ error: {}", domain, ex.getMessage());
+            logger.info("DNS fetching completed for {} (error).", domain);
+            return false;
+        }
     }
 
+    private String toJson(Object value) {
+        try {
+            return objectMapper.writeValueAsString(value);
+        } catch (JsonProcessingException ex) {
+            return "{\"error\":\"Failed to serialize DNS result\"}";
+        }
+    }
 }

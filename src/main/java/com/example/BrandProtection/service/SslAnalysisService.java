@@ -1,7 +1,6 @@
 package com.example.BrandProtection.service;
 
 import java.io.IOException;
-import java.net.Socket;
 import java.security.cert.X509Certificate;
 import java.time.Duration;
 import java.time.Instant;
@@ -22,8 +21,8 @@ public class SslAnalysisService {
         if (domain == null || domain.isBlank()) {
             return null;
         }
-        try (Socket socket = SSLSocketFactory.getDefault().createSocket(domain, 443)) {
-            SSLSocket sslSocket = (SSLSocket) socket;
+        logger.info("SSL inspection started for {}.", domain);
+        try (SSLSocket sslSocket = (SSLSocket) SSLSocketFactory.getDefault().createSocket(domain, 443)) {
             sslSocket.startHandshake();
             X509Certificate certificate = (X509Certificate) sslSocket.getSession().getPeerCertificates()[0];
             SslInspectionResult result = new SslInspectionResult();
@@ -31,6 +30,7 @@ public class SslAnalysisService {
             result.setValidFrom(certificate.getNotBefore().toInstant());
             result.setValidTo(certificate.getNotAfter().toInstant());
             result.setSelfSigned(isSelfSigned(certificate));
+            logger.info("SSL inspection completed for {}.", domain);
             return result;
         } catch (IOException ex) {
             logger.info("SSL inspection failed for {}: {}", domain, ex.getMessage());

@@ -107,10 +107,13 @@ public List<DiscoveredDomainEntity> discover(BrandSnapshot snapshot, ProtectedDo
     Set<String> generated = variationGenerator.generate(snapshot.getBrandDomain(), snapshot.getKeywords());
     candidateDomains.addAll(generated);
 
-    persistSimilarDomains(candidateDomains, domainIqDomains, generated, protectedDomain);
+    similarDomainService.saveCandidates(candidateDomains, domainIqDomains, generated, protectedDomain);
+    generatedDomainService.seedGeneratedDomains(generated, protectedDomain);
 
     for (String domain : candidateDomains) {
-        if (!domainIqDomains.contains(domain) && !isRegisteredDomain(domain)) { continue; }
+        boolean fromDomainIq = domainIqDomains.contains(domain);
+        boolean fromGenerated = generated.contains(domain);
+        if (!fromDomainIq && !isRegisteredDomain(domain, fromGenerated, protectedDomain)) { continue; }
         int similarity = similarityService.similarityPercent(domain, snapshot.getBrandKeyword());
         if (similarity < SIMILARITY_THRESHOLD) { continue; }
         // build entity + save later
@@ -126,6 +129,7 @@ Key steps:
 - Results are stored in `suspicious_domains_discovered`.
 - All candidates (DomainIQ + generated) are saved to `similar_domains`.
 - Candidates are saved in a separate transaction so they persist even if later DNS calls fail.
+- All generated domains are tracked in `generated_domains` with DNS status and result.
 
 ## 7) Candidate limits (load control)
 To avoid timeouts on large searches, discovery limits are configurable:
@@ -137,7 +141,8 @@ These are applied before DNS checks to reduce outbound load.
 
 ## 8) DNS checks
 ```101:109:src/main/java/com/example/BrandProtection/service/DomainDiscoveryService.java
-private boolean isRegisteredDomain(String domain) {
+private boolean isRegisteredDomain(String domain, boolean isGenerated, ProtectedDomainEntity brand) {
+    if (!isGenerated) { return false; }
     DnsDetails dnsDetails = domainIqClient.getDnsHistory(domain);
     if (dnsDetails == null) { return false; }
     return (dnsDetails.getaRecords() != null && !dnsDetails.getaRecords().isEmpty())
@@ -145,6 +150,13 @@ private boolean isRegisteredDomain(String domain) {
         || (dnsDetails.getNsRecords() != null && !dnsDetails.getNsRecords().isEmpty());
 }
 ```
+If DomainIQ times out, the domain is skipped (logged) instead of failing the whole request.
+Generated domains are marked as:
+- `PROCESSING` when DNS starts
+- `FULFILLED` if A/MX/NS exists
+- `FAILED` if DNS fails or no records
+- If a generated domain is already present in DomainIQ results, it is marked
+  `FULFILLED` with a `"present_in_domainiq"` reason (DNS call is skipped).
 
 ## 9) Risk assessment flow
 File: `src/main/java/com/example/BrandProtection/service/DomainRiskAssessmentService.java`
@@ -152,6 +164,9 @@ File: `src/main/java/com/example/BrandProtection/service/DomainRiskAssessmentSer
 - Builds `RiskScoreInput`.
 - Calls `PhishingRiskScoringService` to compute final score and level.
 - Saves to `ThreatEntity` and updates `DiscoveredDomainEntity`.
+- WHOIS lookup status is saved in `whois_lookup` with per-domain logs.
+- All discovered domains are seeded as `PENDING` before WHOIS starts.
+- Logs show: WHOIS start/complete, SSL start/complete, risk scoring start/complete.
 
 ## 10) Threat persistence
 File: `src/main/java/com/example/BrandProtection/service/ThreatService.java`
@@ -192,6 +207,8 @@ Files in `src/main/java/com/example/BrandProtection/domain/`:
 - `ProtectedDomainEntity` maps to `registered_domains`
 - `DiscoveredDomainEntity` maps to `suspicious_domains_discovered`
 - `SimilarDomainEntity` maps to `similar_domains`
+- `GeneratedDomainEntity` maps to `generated_domains`
+- `WhoisLookupEntity` maps to `whois_lookup`
 - `ThreatEntity` stores risk details and evidence
 - Element-collection tables store:
   - `keywords`

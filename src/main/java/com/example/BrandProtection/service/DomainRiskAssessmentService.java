@@ -4,6 +4,9 @@ import com.example.BrandProtection.domain.DiscoveredDomainEntity;
 import com.example.BrandProtection.domain.DiscoveredDomainRepository;
 import com.example.BrandProtection.domain.RiskLevel;
 import com.example.BrandProtection.domainiq.dto.WhoisDetails;
+import com.example.BrandProtection.domainiq.DomainIqException;
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import java.time.Instant;
 import java.util.List;
 import java.util.Locale;
@@ -24,6 +27,8 @@ public class DomainRiskAssessmentService {
     private final ThreatService threatService;
     private final DiscoveredDomainRepository discoveredDomainRepository;
     private final DnsAnalysisService dnsAnalysisService;
+    private final WhoisLookupService whoisLookupService;
+    private final ObjectMapper objectMapper;
 
     public DomainRiskAssessmentService(
         DomainAgeCalculator domainAgeCalculator,
@@ -34,7 +39,9 @@ public class DomainRiskAssessmentService {
         PhishingRiskScoringService scoringService,
         ThreatService threatService,
         DiscoveredDomainRepository discoveredDomainRepository,
-        DnsAnalysisService dnsAnalysisService) {
+        DnsAnalysisService dnsAnalysisService,
+        WhoisLookupService whoisLookupService,
+        ObjectMapper objectMapper) {
         this.domainAgeCalculator = domainAgeCalculator;
         this.whoisAnalysisService = whoisAnalysisService;
         this.registrarRiskService = registrarRiskService;
@@ -44,6 +51,8 @@ public class DomainRiskAssessmentService {
         this.threatService = threatService;
         this.discoveredDomainRepository = discoveredDomainRepository;
         this.dnsAnalysisService = dnsAnalysisService;
+        this.whoisLookupService = whoisLookupService;
+        this.objectMapper = objectMapper;
     }
 
     public RiskScoreResult assess(DiscoveredDomainEntity discoveredDomain, BrandSnapshot snapshot) {
@@ -61,8 +70,22 @@ public class DomainRiskAssessmentService {
             dnsAnalysisResult = new DnsAnalysisResult();
         }
 
-        whoisResult = whoisAnalysisService.analyze(domain);
-        whoisDetails = whoisResult.getWhoisDetails();
+        whoisLookupService.markProcessing(snapshot.getId(), domain);
+        logger.info("WHOIS lookup started for {}.", domain);
+        try {
+            whoisResult = whoisAnalysisService.analyze(domain);
+            whoisDetails = whoisResult.getWhoisDetails();
+            whoisLookupService.markCompleted(snapshot.getId(), domain, toJson(whoisDetails));
+            logger.info("WHOIS lookup completed for {}.", domain);
+        } catch (RuntimeException ex) {
+            String reason = ex instanceof DomainIqException ? ex.getMessage() : "WHOIS error: " + ex.getMessage();
+            whoisLookupService.markFailed(snapshot.getId(), domain, reason);
+            logger.warn("WHOIS lookup failed for {}: {}", domain, ex.getMessage());
+            whoisResult = new WhoisAnalysisResult();
+            whoisResult.setWhoisDetails(null);
+            whoisResult.setAssociatedDomainCount(0);
+            whoisDetails = null;
+        }
         domainAgeDays = domainAgeCalculator.domainAgeInDays(
             whoisDetails == null ? null : whoisDetails.getCreationDate());
         sslResult = sslAnalysisService.inspect(domain);
@@ -86,13 +109,17 @@ public class DomainRiskAssessmentService {
         input.setApprovedRegistrar(isApprovedRegistrar(snapshot, discoveredDomain));
         input.setApprovedEmailProvider(isApprovedEmailProvider(snapshot, dnsAnalysisResult));
 
+        logger.info("Risk scoring started for domain {}.", domain);
         RiskScoreResult scoreResult = scoringService.score(input);
+        logger.info("Risk scoring completed for domain {} with score {} and level {}.",
+            domain, scoreResult.getFinalScore(), scoreResult.getRiskLevel());
         updateDiscoveredDomain(discoveredDomain, domainAgeDays, scoreResult);
         threatService.persistThreat(domain, scoreResult, whoisDetails,
             whoisDetails == null ? null : whoisDetails.getCreationDate(),
             input.getSimilarityScore(), sslResult, contentFlags, dnsAnalysisResult, input);
 
         logger.info("Risk score for {} is {} ({})", domain, scoreResult.getFinalScore(), scoreResult.getRiskLevel());
+        logger.info("Risk assessment completed for domain {}.", domain);
         return scoreResult;
     }
 
@@ -133,6 +160,17 @@ public class DomainRiskAssessmentService {
             }
         }
         return false;
+    }
+
+    private String toJson(Object value) {
+        if (value == null) {
+            return null;
+        }
+        try {
+            return objectMapper.writeValueAsString(value);
+        } catch (JsonProcessingException ex) {
+            return "{\"error\":\"Failed to serialize WHOIS details\"}";
+        }
     }
 
     private void updateDiscoveredDomain(DiscoveredDomainEntity discoveredDomain, int domainAgeDays, RiskScoreResult scoreResult) {

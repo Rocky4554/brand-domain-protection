@@ -20,16 +20,19 @@ public class MonitoringOrchestrator {
     private final DiscoveredDomainRepository discoveredDomainRepository;
     private final DomainDiscoveryService domainDiscoveryService;
     private final DomainRiskAssessmentService riskAssessmentService;
+    private final WhoisLookupService whoisLookupService;
 
     public MonitoringOrchestrator(
         ProtectedDomainRepository protectedDomainRepository,
         DiscoveredDomainRepository discoveredDomainRepository,
         DomainDiscoveryService domainDiscoveryService,
-        DomainRiskAssessmentService riskAssessmentService) {
+        DomainRiskAssessmentService riskAssessmentService,
+        WhoisLookupService whoisLookupService) {
         this.protectedDomainRepository = protectedDomainRepository;
         this.discoveredDomainRepository = discoveredDomainRepository;
         this.domainDiscoveryService = domainDiscoveryService;
         this.riskAssessmentService = riskAssessmentService;
+        this.whoisLookupService = whoisLookupService;
     }
 
     @Transactional
@@ -80,9 +83,21 @@ public class MonitoringOrchestrator {
     public void runForBrandAsync(BrandSnapshot snapshot, ProtectedDomainEntity brand) {
         logger.info("Running discovery for brand {}", snapshot.getBrandDomain());
         List<DiscoveredDomainEntity> discoveredDomains = domainDiscoveryService.discover(snapshot, brand);
+        whoisLookupService.seedPending(
+            snapshot.getId(),
+            discoveredDomains.stream().map(DiscoveredDomainEntity::getDomainName).toList());
         for (DiscoveredDomainEntity discoveredDomain : discoveredDomains) {
-            riskAssessmentService.assess(discoveredDomain, snapshot);
+            try {
+                riskAssessmentService.assess(discoveredDomain, snapshot);
+            } catch (RuntimeException ex) {
+                whoisLookupService.markFailed(
+                    snapshot.getId(),
+                    discoveredDomain.getDomainName(),
+                    "Risk assessment failed: " + ex.getMessage());
+                logger.warn("Risk assessment failed for {}: {}", discoveredDomain.getDomainName(), ex.getMessage());
+            }
         }
+        logger.info("WHOIS lookup completed for brand {}.", snapshot.getBrandDomain());
         logger.info("Immediate processing completed for brand {}", snapshot.getId());
     }
 
