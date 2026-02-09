@@ -106,6 +106,7 @@ the risk assessment flow for a domain.
 - Log WHOIS start/complete/failure per domain
 - On failure, save status + details and continue to next domain
 - Seed `PENDING` entries for every discovered domain before WHOIS starts
+- If WHOIS details are empty, store a warning payload instead of null
 
 ---
 
@@ -115,6 +116,14 @@ It was hard to trace SSL and scoring progress for a domain in logs.
 ### Fix Applied
 - Added per-domain SSL start/complete logs
 - Added scoring start/complete logs with final score and level
+
+---
+
+## Additional Issue: Content scan timing out
+Some domains were timing out during content scan because the HTTP timeout was too low.
+
+### Fix Applied
+- Increased content scan response timeout to 60 seconds
 
 
 ### Config keys involved

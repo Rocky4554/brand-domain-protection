@@ -19,7 +19,7 @@ public class ContentAnalysisService {
 
     public ContentAnalysisService() {
         HttpClient httpClient = HttpClient.create()
-            .responseTimeout(Duration.ofSeconds(5));
+            .responseTimeout(Duration.ofMinutes(1));
         this.webClient = WebClient.builder()
             .clientConnector(new ReactorClientHttpConnector(httpClient))
             .build();

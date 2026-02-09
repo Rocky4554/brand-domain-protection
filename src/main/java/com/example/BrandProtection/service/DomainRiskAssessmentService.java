@@ -75,11 +75,18 @@ public class DomainRiskAssessmentService {
         try {
             whoisResult = whoisAnalysisService.analyze(domain);
             whoisDetails = whoisResult.getWhoisDetails();
-            whoisLookupService.markCompleted(snapshot.getId(), domain, toJson(whoisDetails));
+            String whoisPayload = toJson(whoisDetails);
+            if (whoisPayload == null) {
+                whoisPayload = toJson(whoisResult);
+            }
+            if (whoisPayload == null) {
+                whoisPayload = "{\"warning\":\"WHOIS details empty\"}";
+            }
+            whoisLookupService.markCompleted(snapshot.getId(), domain, whoisPayload);
             logger.info("WHOIS lookup completed for {}.", domain);
         } catch (RuntimeException ex) {
             String reason = ex instanceof DomainIqException ? ex.getMessage() : "WHOIS error: " + ex.getMessage();
-            whoisLookupService.markFailed(snapshot.getId(), domain, reason);
+            whoisLookupService.markFailed(snapshot.getId(), domain, "{\"error\":\"" + reason + "\"}");
             logger.warn("WHOIS lookup failed for {}: {}", domain, ex.getMessage());
             whoisResult = new WhoisAnalysisResult();
             whoisResult.setWhoisDetails(null);

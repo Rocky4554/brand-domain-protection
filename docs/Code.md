@@ -167,6 +167,8 @@ File: `src/main/java/com/example/BrandProtection/service/DomainRiskAssessmentSer
 - WHOIS lookup status is saved in `whois_lookup` with per-domain logs.
 - All discovered domains are seeded as `PENDING` before WHOIS starts.
 - Logs show: WHOIS start/complete, SSL start/complete, risk scoring start/complete.
+- Content scan timeout is 60s.
+- WHOIS details are saved as JSON; if empty, a warning payload is stored.
 
 ## 10) Threat persistence
 File: `src/main/java/com/example/BrandProtection/service/ThreatService.java`
